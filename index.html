@@ -236,26 +236,37 @@
             currentGameId = gameId;
             gameRef = ref(db, `games/${currentGameId}`);
             
-            gameListener = onValue(gameRef, (snapshot) => {
-                if (!snapshot.exists()) {
-                    createAndJoinGame(gameId);
-                } else {
-                    gameData = snapshot.val();
-                    if (!gameData.players || !gameData.players[currentUser.uid]) {
-                        addPlayerToGame(gameId);
-                    }
-                    renderGame(gameData);
-                }
-            });
             loginScreen.classList.add('hidden');
             gameScreen.classList.remove('hidden');
             gameIdDisplay.textContent = gameId;
             lobbyGameIdEl.textContent = gameId;
+
+            gameListener = onValue(gameRef, (snapshot) => {
+                // If the game doesn't exist, create it. This will trigger the listener again.
+                if (!snapshot.exists()) {
+                    createAndJoinGame(gameId);
+                    return; 
+                }
+                
+                gameData = snapshot.val();
+
+                // If the game exists, but we are not in it, add ourselves. This will trigger the listener again.
+                if (!gameData.players || !gameData.players[currentUser.uid]) {
+                    addPlayerToGame(gameId);
+                    return;
+                }
+                
+                // If we are here, the game data is valid and includes us. Render the game.
+                renderGame(gameData);
+            });
         }
         
         function createAndJoinGame(gameId) {
              const initialGameState = { id: gameId, players: {}, gameState: 'waiting' };
-             set(gameRef, initialGameState).then(() => addPlayerToGame(gameId));
+             set(gameRef, initialGameState).then(() => {
+                // After creating the game structure, add the player.
+                // The onValue listener will catch this update.
+             });
         }
 
         function addPlayerToGame(gameId) {
@@ -273,7 +284,6 @@
             if (!data || !currentUser || !data.players) return;
             const players = Object.values(data.players);
 
-            // Lobby and player list rendering
             const playersListContainer = document.getElementById('players-list');
             playersListContainer.innerHTML = players.map(p => renderPlayer(p)).join('');
 
@@ -285,7 +295,6 @@
             }
 
             const me = data.players[currentUser.uid];
-            // Render my-specific elements if I exist in the game data
             if (me) {
                 const myHandContainer = document.getElementById('my-hand');
                 myHandContainer.innerHTML = (me.hand?.length > 0)
@@ -420,14 +429,11 @@
             const playerKeys = Object.keys(gameData.players).filter(id => gameData.players[id].status !== 'out' && gameData.players[id].chips > 0);
             const activePlayers = playerKeys.filter(id => gameData.players[id].status === 'active');
             
-            // 全員フォールドして勝者が決まった場合
             if (Object.values(gameData.players).filter(p => p.status !== 'folded').length <= 1) {
                 setTimeout(proceedToNextStage, 500); return;
             }
 
-            // ベットラウンド終了判定
             if(activePlayers.every(pKey => gameData.players[pKey].currentBet === gameData.currentBet)) {
-                // チェックで回った場合、ディーラーの次のプレイヤーが最後
                 const bigBlindIndex = (gameData.dealerIndex + 2) % playerKeys.length;
                 if (gameData.lastRaiser === playerKeys[gameData.currentPlayerIndex] || (gameData.currentBet === 0 && gameData.currentPlayerIndex === bigBlindIndex)) {
                      setTimeout(proceedToNextStage, 500); return;
@@ -483,7 +489,6 @@
             const updates = { gameState: 'showdown', winnerAnnounced: true };
             const playersInHand = Object.values(gameData.players).filter(p => p.status !== 'folded');
 
-            // 役判定ロジックは未実装のため、仮の勝者を決定
             const winner = playersInHand.length > 0 ? playersInHand[0] : null;
 
             if(winner) {
