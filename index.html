@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase Realtime Poker</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&family=Orbitron:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #0f172a;
+            color: #e2e8f0;
+        }
+        .font-orbitron { font-family: 'Orbitron', sans-serif; }
+        .card {
+            width: 80px;
+            height: 112px;
+            border-radius: 8px;
+            background-color: white;
+            color: black;
+            border: 1px solid #4a5568;
+            position: relative;
+            font-size: 24px;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .card.red { color: #ef4444; }
+        .card.black { color: #1f2937; }
+        .card-back {
+            background: linear-gradient(135deg, #4a5568 25%, #2d3748 25%, #2d3748 50%, #4a5568 50%, #4a5568 75%, #2d3748 75%, #2d3748 100%);
+            background-size: 40px 40px;
+        }
+        .card-value { font-size: 2rem; }
+        .card-suit { font-size: 1.5rem; }
+        .glassmorphism {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .edit-icon {
+            cursor: pointer;
+            display: inline-block;
+            margin-left: 8px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        .edit-icon:hover { opacity: 1; }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- Login/Lobby Screen -->
+    <div id="login-screen" class="w-full max-w-md text-center">
+        <h1 class="text-5xl font-orbitron text-cyan-400 mb-8 tracking-wider">Realtime Poker</h1>
+        <div class="glassmorphism rounded-xl p-8 space-y-4">
+            <input type="text" id="player-name-input" placeholder="プレイヤー名を入力" class="w-full px-4 py-3 bg-slate-800 text-white border border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500 text-center text-lg">
+            
+            <button id="create-game-btn" class="w-full px-4 py-3 bg-green-600 hover:bg-green-700 rounded-md font-bold transition-colors mt-4">新しいルームを作成</button>
+            
+            <div class="space-y-4 pt-4">
+                <p class="text-slate-300">または</p>
+                <input type="text" id="game-id-input" placeholder="6桁のルームIDで参加" class="w-full px-4 py-3 bg-slate-800 text-white border border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500 text-center text-lg tracking-widest">
+                <button id="join-game-btn" class="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-md font-bold transition-colors">既存のルームに参加</button>
+            </div>
+             <p class="text-sm text-slate-400 pt-2">あなたのID: <span id="user-id" class="font-mono text-yellow-300"></span></p>
+        </div>
+    </div>
+
+    <!-- Game Screen -->
+    <div id="game-screen" class="hidden w-full h-screen flex">
+        <!-- Left Panel: Players & Info -->
+        <div class="w-1/4 p-4 space-y-6 overflow-y-auto bg-slate-900/50">
+            <div>
+                <h2 class="text-xl font-bold mb-2 text-cyan-400">ルームID: <span id="game-id-display" class="font-mono text-white"></span></h2>
+                <h3 class="text-lg font-bold mb-2">参加者</h3>
+                <div id="players-list" class="space-y-3">
+                    <!-- Players will be listed here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Panel: Game Area -->
+        <div class="w-1/2 flex flex-col items-center justify-center p-6 space-y-8">
+            <div class="text-center">
+                <p class="text-4xl font-bold text-yellow-300">POT: <span id="pot-amount">0</span></p>
+                <div id="community-cards" class="flex justify-center space-x-2 mt-4 min-h-[120px]"></div>
+            </div>
+            <div id="message-area" class="text-center text-xl text-yellow-300 h-8"></div>
+            <div class="w-full max-w-lg text-center space-y-4">
+                 <h2 class="text-2xl mb-2">あなたの手札</h2>
+                 <div id="my-hand" class="flex justify-center space-x-2 min-h-[120px]"></div>
+                 <div id="action-buttons" class="flex items-center justify-center space-x-2 pt-4">
+                     <button data-action="fold" class="action-btn px-4 py-2 bg-red-600 hover:bg-red-700 rounded-md font-bold disabled:opacity-50">フォールド</button>
+                     <button data-action="check" class="action-btn px-4 py-2 bg-gray-500 hover:bg-gray-600 rounded-md font-bold disabled:opacity-50">チェック</button>
+                     <button data-action="call" class="action-btn px-4 py-2 bg-yellow-500 hover:bg-yellow-600 rounded-md font-bold disabled:opacity-50">コール</button>
+                     <div class="flex items-center">
+                        <input type="number" id="bet-amount" min="1" value="10" class="w-24 px-2 py-2 bg-slate-700 text-white border-t border-b border-l border-slate-600 rounded-l-md focus:outline-none text-center">
+                        <button data-action="bet" class="action-btn px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-r-md font-bold disabled:opacity-50">ベット</button>
+                     </div>
+                 </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel: Poker Hands -->
+        <div class="w-1/4 p-4 bg-slate-900/50">
+            <h2 class="text-xl font-bold mb-4 text-cyan-400">ポーカー役一覧</h2>
+            <ul class="space-y-2 text-sm">
+                <li class="p-2 rounded-md bg-slate-800"><strong class="text-yellow-300">ロイヤルストレートフラッシュ</strong><p class="text-xs text-slate-400">同じスートのA, K, Q, J, 10</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong class="text-yellow-400">ストレートフラッシュ</strong><p class="text-xs text-slate-400">同じスートの連続した5枚</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong class="text-yellow-500">フォーカード</strong><p class="text-xs text-slate-400">同じ数字のカード4枚</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong class="text-orange-400">フルハウス</strong><p class="text-xs text-slate-400">ワンペアとスリーカード</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong class="text-orange-500">フラッシュ</strong><p class="text-xs text-slate-400">同じスートのカード5枚</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong>ストレート</strong><p class="text-xs text-slate-400">スートが違う連続した5枚</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong>スリーカード</strong><p class="text-xs text-slate-400">同じ数字のカード3枚</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong>ツーペア</strong><p class="text-xs text-slate-400">ワンペアが2組</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong>ワンペア</strong><p class="text-xs text-slate-400">同じ数字のカード2枚</p></li>
+                <li class="p-2 rounded-md bg-slate-800"><strong>ハイカード</strong><p class="text-xs text-slate-400">役がない場合</p></li>
+            </ul>
+        </div>
+        
+        <!-- Lobby Overlay -->
+        <div id="lobby-overlay" class="absolute inset-0 bg-black/70 flex flex-col items-center justify-center hidden">
+             <div class="text-center p-8 glassmorphism rounded-xl">
+                <h2 class="text-2xl mb-2">待機中...</h2>
+                <p class="mb-4">ルームID: <strong id="lobby-game-id" class="text-3xl font-mono text-cyan-400 tracking-widest"></strong></p>
+                <div class="bg-slate-800/50 p-4 rounded-lg min-w-[300px]">
+                    <h3 class="font-bold mb-2">参加中のプレイヤー</h3>
+                    <div id="lobby-players-list" class="space-y-1"></div>
+                </div>
+                <button id="start-round-btn" class="mt-6 px-8 py-3 bg-purple-600 hover:bg-purple-700 rounded-md font-bold transition-colors">ゲーム開始</button>
+             </div>
+        </div>
+    </div>
+    
+    <!-- Modal for notifications -->
+    <div id="modal" class="hidden absolute inset-0 bg-black/70 flex items-center justify-center">
+        <div class="bg-slate-800 p-8 rounded-lg text-center shadow-lg">
+            <p id="modal-text" class="text-xl mb-6"></p>
+            <button id="modal-close-btn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-bold">閉じる</button>
+        </div>
+    </div>
+
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getDatabase, ref, set, onValue, update, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDL_gm2Vv3BrRskvzPUi4yParr9weXLAT0",
+            authDomain: "blackjack-fa1d3.firebaseapp.com",
+            databaseURL: "https://blackjack-fa1d3-default-rtdb.firebaseio.com",
+            projectId: "blackjack-fa1d3",
+            storageBucket: "blackjack-fa1d3.firebasestorage.app",
+            messagingSenderId: "948904325337",
+            appId: "1:948904325337:web:b86e21e40036c477944ec8",
+            measurementId: "G-CN3ZH27WS9"
+        };
+        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase(app);
+
+        let currentUser = null;
+        let currentGameId = null;
+        let gameRef = null;
+        let gameData = null;
+        let gameListener = null;
+
+        const userIdEl = document.getElementById('user-id');
+        const loginScreen = document.getElementById('login-screen');
+        const gameScreen = document.getElementById('game-screen');
+        const playerNameInput = document.getElementById('player-name-input');
+        const createGameBtn = document.getElementById('create-game-btn');
+        const joinGameBtn = document.getElementById('join-game-btn');
+        const gameIdInput = document.getElementById('game-id-input');
+        const gameIdDisplay = document.getElementById('game-id-display');
+        
+        const lobbyOverlay = document.getElementById('lobby-overlay');
+        const lobbyGameIdEl = document.getElementById('lobby-game-id');
+        const lobbyPlayersList = document.getElementById('lobby-players-list');
+        const startRoundBtn = document.getElementById('start-round-btn');
+        
+        const modal = document.getElementById('modal');
+        const modalText = document.getElementById('modal-text');
+        const modalCloseBtn = document.getElementById('modal-close-btn');
+        
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                userIdEl.textContent = user.uid.substring(0, 8);
+            } else {
+                signInAnonymously(auth).catch((error) => showModal(`認証エラー: ${error.message}`));
+            }
+        });
+        
+        createGameBtn.addEventListener('click', () => {
+            if (!currentUser) return;
+            const newGameId = Math.floor(100000 + Math.random() * 900000).toString();
+            joinGame(newGameId);
+        });
+
+        joinGameBtn.addEventListener('click', () => {
+            const gameId = gameIdInput.value.trim();
+            if (!/^\d{6}$/.test(gameId)) {
+                showModal("6桁の数字でルームIDを入力してください。");
+                return;
+            }
+            if (!currentUser) return;
+            joinGame(gameId);
+        });
+
+        function joinGame(gameId) {
+            if (currentGameId && gameListener) {
+                remove(ref(db, `games/${currentGameId}/players/${currentUser.uid}`));
+                gameListener();
+            }
+            currentGameId = gameId;
+            gameRef = ref(db, `games/${currentGameId}`);
+            
+            gameListener = onValue(gameRef, (snapshot) => {
+                if (!snapshot.exists()) {
+                    createAndJoinGame(gameId);
+                } else {
+                    gameData = snapshot.val();
+                    if (!gameData.players || !gameData.players[currentUser.uid]) {
+                        addPlayerToGame(gameId);
+                    }
+                    renderGame(gameData);
+                }
+            });
+            loginScreen.classList.add('hidden');
+            gameScreen.classList.remove('hidden');
+            gameIdDisplay.textContent = gameId;
+            lobbyGameIdEl.textContent = gameId;
+        }
+        
+        function createAndJoinGame(gameId) {
+             const initialGameState = { id: gameId, players: {}, gameState: 'waiting' };
+             set(gameRef, initialGameState).then(() => addPlayerToGame(gameId));
+        }
+
+        function addPlayerToGame(gameId) {
+            const playerRef = ref(db, `games/${gameId}/players/${currentUser.uid}`);
+            const playerName = playerNameInput.value.trim() || `Player ${currentUser.uid.substring(0,4)}`;
+            const playerData = {
+                uid: currentUser.uid, name: playerName, chips: 1000,
+                hand: [], currentBet: 0, status: 'waiting', isDealer: false,
+            };
+            set(playerRef, playerData);
+            onDisconnect(playerRef).remove();
+        }
+
+        function renderGame(data) {
+            if (!data || !currentUser || !data.players) return;
+            const players = Object.values(data.players);
+
+            // Lobby and player list rendering
+            const playersListContainer = document.getElementById('players-list');
+            playersListContainer.innerHTML = players.map(p => renderPlayer(p)).join('');
+
+            if (data.gameState === 'waiting') {
+                lobbyOverlay.classList.remove('hidden');
+                lobbyPlayersList.innerHTML = players.map(p => `<p class="text-white">${p.name} - ${p.chips} 🪙</p>`).join('');
+            } else {
+                lobbyOverlay.classList.add('hidden');
+            }
+
+            const me = data.players[currentUser.uid];
+            // Render my-specific elements
+            const myHandContainer = document.getElementById('my-hand');
+            myHandContainer.innerHTML = (me?.hand?.length > 0)
+                ? me.hand.map(createCardElement).join('')
+                : '<div class="card card-back"></div><div class="card card-back"></div>';
+
+            document.getElementById('community-cards').innerHTML = (data.communityCards?.length > 0)
+                ? data.communityCards.map(createCardElement).join('') : '';
+            document.getElementById('pot-amount').textContent = data.pot || 0;
+            
+            const myTurn = data.players[Object.keys(data.players)[data.currentPlayerIndex]]?.uid === currentUser.uid;
+            updateActionButtons(me, data, myTurn);
+            document.getElementById('message-area').textContent = data.message || '';
+            
+            if (data.gameState === 'showdown' && !data.winnerAnnounced) handleShowdown(data);
+        }
+
+        function renderPlayer(player) {
+            const isMe = player.uid === currentUser.uid;
+            const editButton = isMe ? `<span class="edit-icon" data-uid="${player.uid}">✏️</span>` : '';
+            return `
+                <div class="p-2 rounded-md ${isMe ? 'bg-cyan-800/50' : 'bg-slate-800'}">
+                    <p class="font-bold">${player.name} ${editButton}</p>
+                    <p class="text-sm text-yellow-300">${player.chips} 🪙</p>
+                    <p class="text-xs ${player.status === 'folded' ? 'text-red-500' : 'text-slate-400'}">${player.status.toUpperCase()}</p>
+                </div>`;
+        }
+        
+        document.getElementById('players-list').addEventListener('click', (e) => {
+            if (e.target.classList.contains('edit-icon')) {
+                const uid = e.target.dataset.uid;
+                if (uid === currentUser.uid) {
+                    const newName = prompt("新しいプレイヤー名を入力してください:", gameData.players[uid].name);
+                    if (newName && newName.trim() !== "") {
+                        update(ref(db, `games/${currentGameId}/players/${uid}`), { name: newName.trim() });
+                    }
+                }
+            }
+        });
+        
+        function updateActionButtons(me, data, isMyTurn) {
+            document.querySelectorAll('.action-btn, #bet-amount').forEach(btn => {
+                btn.disabled = !isMyTurn || !me || me.status !== 'active';
+            });
+            if (isMyTurn && me && me.status === 'active') {
+                const callAmount = (data.currentBet || 0) - me.currentBet;
+                document.querySelector('[data-action="check"]').disabled = callAmount > 0;
+                document.querySelector('[data-action="call"]').disabled = callAmount <= 0;
+            }
+        }
+
+        function createCardElement(cardStr) {
+            const suits = { S: '♠', H: '♥', D: '♦', C: '♣' };
+            const colors = { S: 'black', H: 'red', D: 'red', C: 'black' };
+            const value = cardStr.slice(0, -1);
+            const suitChar = cardStr.slice(-1);
+            return `<div class="card ${colors[suitChar]}"><span class="card-value">${value}</span><span class="card-suit">${suits[suitChar]}</span></div>`;
+        }
+
+        startRoundBtn.addEventListener('click', () => {
+            if (!gameData || gameData.gameState !== 'waiting') return;
+            if (Object.values(gameData.players).length < 2) { showModal("プレイヤーが2人以上必要です。"); return; }
+            startNewRound();
+        });
+
+        document.getElementById('action-buttons').addEventListener('click', (e) => {
+            if (e.target.tagName !== 'BUTTON') return;
+            const action = e.target.dataset.action;
+            if (action) handlePlayerAction(action);
+        });
+        
+        function handlePlayerAction(action) {
+            const me = gameData.players[currentUser.uid];
+            if (!me || me.status !== 'active') return;
+            const updates = {};
+            const callAmount = (gameData.currentBet || 0) - me.currentBet;
+            
+            if (action === 'fold') updates[`players/${me.uid}/status`] = 'folded';
+            else if (action === 'check') { if (callAmount > 0) return; }
+            else if (action === 'call') {
+                updates[`players/${me.uid}/chips`] = me.chips - callAmount;
+                updates[`players/${me.uid}/currentBet`] = me.currentBet + callAmount;
+            } else if (action === 'bet') {
+                const betAmount = parseInt(document.getElementById('bet-amount').value, 10);
+                const minRaise = gameData.currentBet > 0 ? gameData.currentBet * 2 : 10;
+                if (betAmount < minRaise || betAmount > (me.chips + me.currentBet)) {
+                    showModal(`ベット額が不適切です。`); return;
+                }
+                updates[`players/${me.uid}/chips`] = me.chips + me.currentBet - betAmount;
+                updates[`players/${me.uid}/currentBet`] = betAmount;
+                updates['currentBet'] = betAmount;
+                updates['lastRaiser'] = me.uid;
+            } else return;
+            
+            updates['message'] = `${me.name}が${action}しました。`;
+            update(gameRef, updates).then(advanceTurn);
+        }
+        
+        function startNewRound() {
+            const updates = {};
+            const playerKeys = Object.keys(gameData.players).filter(uid => gameData.players[uid].chips > 0);
+            playerKeys.forEach(uid => {
+                updates[`players/${uid}/hand`] = [];
+                updates[`players/${uid}/currentBet`] = 0;
+                updates[`players/${uid}/status`] = 'active';
+            });
+            const suits = ['S', 'H', 'D', 'C'], values = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
+            let deck = suits.flatMap(s => values.map(v => v + s)).sort(() => Math.random() - 0.5);
+            for (let i = 0; i < 2; i++) for (let uid of playerKeys) updates[`players/${uid}/hand/${i}`] = deck.pop();
+            const newDealerIndex = (gameData.dealerIndex + 1 || 0) % playerKeys.length;
+            const firstPlayerIndex = (newDealerIndex + 1) % playerKeys.length;
+            updates['deck'] = deck;
+            updates['communityCards'] = [];
+            updates['pot'] = 0;
+            updates['gameState'] = 'pre-flop';
+            updates['dealerIndex'] = newDealerIndex;
+            updates['currentPlayerIndex'] = firstPlayerIndex;
+            updates['currentBet'] = 0;
+            updates['lastRaiser'] = playerKeys[firstPlayerIndex];
+            updates['message'] = `ラウンド開始。${gameData.players[playerKeys[firstPlayerIndex]].name}のターン。`;
+            update(gameRef, updates);
+        }
+
+        function advanceTurn() {
+            const playerKeys = Object.keys(gameData.players).filter(id => gameData.players[id].status !== 'out');
+            const activePlayers = playerKeys.filter(id => gameData.players[id].status === 'active');
+            
+            if (activePlayers.length <= 1) {
+                setTimeout(proceedToNextStage, 1000);
+                return;
+            }
+
+            if(activePlayers.every(pKey => gameData.players[pKey].currentBet === gameData.currentBet)) {
+                if (gameData.lastRaiser === playerKeys[gameData.currentPlayerIndex] || gameData.currentBet === 0) {
+                     setTimeout(proceedToNextStage, 1000);
+                     return;
+                }
+            }
+            
+            let nextIndex = gameData.currentPlayerIndex;
+            do {
+                nextIndex = (nextIndex + 1) % playerKeys.length;
+            } while (['folded', 'all-in', 'out'].includes(gameData.players[playerKeys[nextIndex]]?.status));
+            update(ref(db, `games/${currentGameId}`), { currentPlayerIndex: nextIndex, message: `${gameData.players[playerKeys[nextIndex]].name}のターン。` });
+        }
+        
+        function proceedToNextStage() {
+            const updates = {};
+            let totalPot = gameData.pot || 0;
+            Object.values(gameData.players).forEach(p => { totalPot += p.currentBet; updates[`players/${p.uid}/currentBet`] = 0; });
+            updates['pot'] = totalPot;
+            
+            if (Object.values(gameData.players).filter(p => p.status !== 'folded').length <= 1) {
+                 handleShowdown(gameData); return;
+            }
+
+            let newGameState = 'waiting';
+            switch(gameData.gameState) {
+                case 'pre-flop': newGameState = 'flop'; break;
+                case 'flop': newGameState = 'turn'; break;
+                case 'turn': newGameState = 'river'; break;
+                case 'river': newGameState = 'showdown'; break;
+            }
+            updates['gameState'] = newGameState;
+
+            let deck = gameData.deck;
+            if (newGameState === 'flop') { updates['communityCards'] = [deck.pop(), deck.pop(), deck.pop()]; } 
+            else if (newGameState === 'turn' || newGameState === 'river') { updates[`communityCards/${gameData.communityCards.length}`] = deck.pop(); }
+            updates['deck'] = deck;
+
+            if (newGameState.match(/flop|turn|river/)) {
+                updates['message'] = `${newGameState.toUpperCase()}ラウンド`;
+            } else if (newGameState === 'showdown') {
+                handleShowdown(gameData);
+            }
+            update(gameRef, updates);
+        }
+
+        function handleShowdown(data) {
+            const winner = Object.values(data.players).filter(p => p.status !== 'folded')[0];
+            if(winner) {
+                const newChips = (winner.chips || 0) + (data.pot || 0);
+                update(ref(db, `games/${currentGameId}/players/${winner.uid}`), { chips: newChips });
+                update(gameRef, { winnerAnnounced: true, message: `${winner.name}の勝利！` });
+                showModal(`${winner.name}がポット(${data.pot})を獲得しました！(役判定は未実装)`);
+            }
+            setTimeout(() => update(gameRef, { gameState: 'waiting' }), 5000);
+        }
+
+        modalCloseBtn.addEventListener('click', () => modal.classList.add('hidden'));
+        function showModal(text) {
+            modalText.textContent = text;
+            modal.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
