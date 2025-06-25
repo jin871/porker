@@ -154,7 +154,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getDatabase, ref, set, onValue, update, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
+        import { getDatabase, ref, set, onValue, update, remove, onDisconnect, get } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDL_gm2Vv3BrRskvzPUi4yParr9weXLAT0",
@@ -205,85 +205,78 @@
         });
         
         createGameBtn.addEventListener('click', () => {
-            if (!currentUser) { showModal("認証中です。"); return; }
-            if (playerNameInput.value.trim() === "") {
-                showModal("プレイヤー名を入力してください。");
-                return;
-            }
+            if (!validateInputs()) return;
             const newGameId = Math.floor(100000 + Math.random() * 900000).toString();
             joinGame(newGameId);
         });
 
         joinGameBtn.addEventListener('click', () => {
-            if (!currentUser) { showModal("認証中です。"); return; }
             const gameId = gameIdInput.value.trim();
-            if (playerNameInput.value.trim() === "") {
-                showModal("プレイヤー名を入力してください。");
-                return;
-            }
-            if (!/^\d{6}$/.test(gameId)) {
-                showModal("6桁の数字でルームIDを入力してください。");
-                return;
-            }
+            if (!validateInputs(gameId)) return;
             joinGame(gameId);
         });
+        
+        function validateInputs(gameId = null) {
+            if (!currentUser) {
+                showModal("認証中です。");
+                return false;
+            }
+            if (playerNameInput.value.trim() === "") {
+                showModal("プレイヤー名を入力してください。");
+                return false;
+            }
+            if (gameId !== null && !/^\d{6}$/.test(gameId)) {
+                 showModal("6桁の数字でルームIDを入力してください。");
+                 return false;
+            }
+            return true;
+        }
 
-        function joinGame(gameId) {
+        async function joinGame(gameId) {
             if (currentGameId && gameListener) {
                 remove(ref(db, `games/${currentGameId}/players/${currentUser.uid}`));
-                gameListener();
+                gameListener(); // Unsubscribe from old listener
             }
             currentGameId = gameId;
             gameRef = ref(db, `games/${currentGameId}`);
             
-            loginScreen.classList.add('hidden');
-            gameScreen.classList.remove('hidden');
-            gameIdDisplay.textContent = gameId;
-            lobbyGameIdEl.textContent = gameId;
-
-            gameListener = onValue(gameRef, (snapshot) => {
-                // If the game doesn't exist, create it. This will trigger the listener again.
-                if (!snapshot.exists()) {
-                    createAndJoinGame(gameId);
-                    return; 
-                }
-                
-                gameData = snapshot.val();
-
-                // If the game exists, but we are not in it, add ourselves. This will trigger the listener again.
-                if (!gameData.players || !gameData.players[currentUser.uid]) {
-                    addPlayerToGame(gameId);
-                    return;
-                }
-                
-                // If we are here, the game data is valid and includes us. Render the game.
-                renderGame(gameData);
-            });
-        }
-        
-        function createAndJoinGame(gameId) {
-             const initialGameState = { id: gameId, players: {}, gameState: 'waiting' };
-             set(gameRef, initialGameState).then(() => {
-                // After creating the game structure, add the player.
-                // The onValue listener will catch this update.
-             });
-        }
-
-        function addPlayerToGame(gameId) {
-            const playerRef = ref(db, `games/${gameId}/players/${currentUser.uid}`);
-            const playerName = playerNameInput.value.trim() || `Player ${currentUser.uid.substring(0,4)}`;
+            // First, write my player data to ensure I am in the game.
+            const playerRef = ref(db, `games/${currentGameId}/players/${currentUser.uid}`);
+            const playerName = playerNameInput.value.trim();
             const playerData = {
                 uid: currentUser.uid, name: playerName, chips: 1000,
                 hand: [], currentBet: 0, status: 'waiting', isDealer: false,
             };
-            set(playerRef, playerData);
+            await set(playerRef, playerData);
             onDisconnect(playerRef).remove();
-        }
 
+            // Ensure the game shell exists.
+            const gameStateRef = ref(db, `games/${currentGameId}/gameState`);
+            const gameSnap = await get(gameStateRef);
+            if (!gameSnap.exists()) {
+                await update(gameRef, { id: gameId, gameState: 'waiting' });
+            }
+
+            // UI transition
+            loginScreen.classList.add('hidden');
+            gameScreen.classList.remove('hidden');
+            gameIdDisplay.textContent = gameId;
+            lobbyGameIdEl.textContent = gameId;
+            
+            // Now, listen for all updates and render.
+            gameListener = onValue(gameRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    gameData = snapshot.val();
+                    renderGame(gameData);
+                }
+            });
+        }
+        
         function renderGame(data) {
             if (!data || !currentUser || !data.players) return;
             const players = Object.values(data.players);
 
+            // Lobby and player list rendering
             const playersListContainer = document.getElementById('players-list');
             playersListContainer.innerHTML = players.map(p => renderPlayer(p)).join('');
 
@@ -434,8 +427,7 @@
             }
 
             if(activePlayers.every(pKey => gameData.players[pKey].currentBet === gameData.currentBet)) {
-                const bigBlindIndex = (gameData.dealerIndex + 2) % playerKeys.length;
-                if (gameData.lastRaiser === playerKeys[gameData.currentPlayerIndex] || (gameData.currentBet === 0 && gameData.currentPlayerIndex === bigBlindIndex)) {
+                if (gameData.lastRaiser === playerKeys[gameData.currentPlayerIndex] || gameData.currentBet === 0) {
                      setTimeout(proceedToNextStage, 500); return;
                 }
             }
@@ -488,7 +480,6 @@
         function handleShowdown() {
             const updates = { gameState: 'showdown', winnerAnnounced: true };
             const playersInHand = Object.values(gameData.players).filter(p => p.status !== 'folded');
-
             const winner = playersInHand.length > 0 ? playersInHand[0] : null;
 
             if(winner) {
