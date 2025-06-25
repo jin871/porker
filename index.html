@@ -205,18 +205,26 @@
         });
         
         createGameBtn.addEventListener('click', () => {
-            if (!currentUser) return;
+            if (!currentUser) { showModal("認証中です。"); return; }
+            if (playerNameInput.value.trim() === "") {
+                showModal("プレイヤー名を入力してください。");
+                return;
+            }
             const newGameId = Math.floor(100000 + Math.random() * 900000).toString();
             joinGame(newGameId);
         });
 
         joinGameBtn.addEventListener('click', () => {
+            if (!currentUser) { showModal("認証中です。"); return; }
             const gameId = gameIdInput.value.trim();
+            if (playerNameInput.value.trim() === "") {
+                showModal("プレイヤー名を入力してください。");
+                return;
+            }
             if (!/^\d{6}$/.test(gameId)) {
                 showModal("6桁の数字でルームIDを入力してください。");
                 return;
             }
-            if (!currentUser) return;
             joinGame(gameId);
         });
 
@@ -277,18 +285,21 @@
             }
 
             const me = data.players[currentUser.uid];
-            // Render my-specific elements
-            const myHandContainer = document.getElementById('my-hand');
-            myHandContainer.innerHTML = (me?.hand?.length > 0)
-                ? me.hand.map(createCardElement).join('')
-                : '<div class="card card-back"></div><div class="card card-back"></div>';
+            // Render my-specific elements if I exist in the game data
+            if (me) {
+                const myHandContainer = document.getElementById('my-hand');
+                myHandContainer.innerHTML = (me.hand?.length > 0)
+                    ? me.hand.map(createCardElement).join('')
+                    : '<div class="card card-back"></div><div class="card card-back"></div>';
+                
+                const myTurn = data.players[Object.keys(data.players)[data.currentPlayerIndex]]?.uid === currentUser.uid;
+                updateActionButtons(me, data, myTurn);
+            }
 
             document.getElementById('community-cards').innerHTML = (data.communityCards?.length > 0)
                 ? data.communityCards.map(createCardElement).join('') : '';
             document.getElementById('pot-amount').textContent = data.pot || 0;
             
-            const myTurn = data.players[Object.keys(data.players)[data.currentPlayerIndex]]?.uid === currentUser.uid;
-            updateActionButtons(me, data, myTurn);
             document.getElementById('message-area').textContent = data.message || '';
             
             if (data.gameState === 'showdown' && !data.winnerAnnounced) handleShowdown(data);
@@ -324,7 +335,9 @@
             if (isMyTurn && me && me.status === 'active') {
                 const callAmount = (data.currentBet || 0) - me.currentBet;
                 document.querySelector('[data-action="check"]').disabled = callAmount > 0;
-                document.querySelector('[data-action="call"]').disabled = callAmount <= 0;
+                const callBtn = document.querySelector('[data-action="call"]');
+                callBtn.disabled = callAmount <= 0;
+                callBtn.textContent = `コール(${callAmount})`
             }
         }
 
@@ -351,6 +364,9 @@
         function handlePlayerAction(action) {
             const me = gameData.players[currentUser.uid];
             if (!me || me.status !== 'active') return;
+            const myTurn = gameData.players[Object.keys(gameData.players)[gameData.currentPlayerIndex]]?.uid === currentUser.uid;
+            if(!myTurn) return;
+
             const updates = {};
             const callAmount = (gameData.currentBet || 0) - me.currentBet;
             
@@ -386,7 +402,7 @@
             const suits = ['S', 'H', 'D', 'C'], values = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
             let deck = suits.flatMap(s => values.map(v => v + s)).sort(() => Math.random() - 0.5);
             for (let i = 0; i < 2; i++) for (let uid of playerKeys) updates[`players/${uid}/hand/${i}`] = deck.pop();
-            const newDealerIndex = (gameData.dealerIndex + 1 || 0) % playerKeys.length;
+            const newDealerIndex = (gameData.dealerIndex === undefined ? -1 : gameData.dealerIndex + 1) % playerKeys.length;
             const firstPlayerIndex = (newDealerIndex + 1) % playerKeys.length;
             updates['deck'] = deck;
             updates['communityCards'] = [];
@@ -401,18 +417,20 @@
         }
 
         function advanceTurn() {
-            const playerKeys = Object.keys(gameData.players).filter(id => gameData.players[id].status !== 'out');
+            const playerKeys = Object.keys(gameData.players).filter(id => gameData.players[id].status !== 'out' && gameData.players[id].chips > 0);
             const activePlayers = playerKeys.filter(id => gameData.players[id].status === 'active');
             
-            if (activePlayers.length <= 1) {
-                setTimeout(proceedToNextStage, 1000);
-                return;
+            // 全員フォールドして勝者が決まった場合
+            if (Object.values(gameData.players).filter(p => p.status !== 'folded').length <= 1) {
+                setTimeout(proceedToNextStage, 500); return;
             }
 
+            // ベットラウンド終了判定
             if(activePlayers.every(pKey => gameData.players[pKey].currentBet === gameData.currentBet)) {
-                if (gameData.lastRaiser === playerKeys[gameData.currentPlayerIndex] || gameData.currentBet === 0) {
-                     setTimeout(proceedToNextStage, 1000);
-                     return;
+                // チェックで回った場合、ディーラーの次のプレイヤーが最後
+                const bigBlindIndex = (gameData.dealerIndex + 2) % playerKeys.length;
+                if (gameData.lastRaiser === playerKeys[gameData.currentPlayerIndex] || (gameData.currentBet === 0 && gameData.currentPlayerIndex === bigBlindIndex)) {
+                     setTimeout(proceedToNextStage, 500); return;
                 }
             }
             
@@ -429,8 +447,9 @@
             Object.values(gameData.players).forEach(p => { totalPot += p.currentBet; updates[`players/${p.uid}/currentBet`] = 0; });
             updates['pot'] = totalPot;
             
-            if (Object.values(gameData.players).filter(p => p.status !== 'folded').length <= 1) {
-                 handleShowdown(gameData); return;
+            const remainingPlayers = Object.values(gameData.players).filter(p => p.status !== 'folded');
+            if (remainingPlayers.length <= 1) {
+                 handleShowdown(); return;
             }
 
             let newGameState = 'waiting';
@@ -444,26 +463,46 @@
 
             let deck = gameData.deck;
             if (newGameState === 'flop') { updates['communityCards'] = [deck.pop(), deck.pop(), deck.pop()]; } 
-            else if (newGameState === 'turn' || newGameState === 'river') { updates[`communityCards/${gameData.communityCards.length}`] = deck.pop(); }
+            else if (newGameState === 'turn' || newGameState === 'river') { updates[`communityCards/${(gameData.communityCards || []).length}`] = deck.pop(); }
             updates['deck'] = deck;
 
             if (newGameState.match(/flop|turn|river/)) {
                 updates['message'] = `${newGameState.toUpperCase()}ラウンド`;
+                 let firstPlayerIndex = (gameData.dealerIndex + 1) % Object.keys(gameData.players).length;
+                 while(['folded', 'all-in', 'out'].includes(gameData.players[Object.keys(gameData.players)[firstPlayerIndex]]?.status)){
+                      firstPlayerIndex = (firstPlayerIndex + 1) % Object.keys(gameData.players).length;
+                 }
+                updates['currentPlayerIndex'] = firstPlayerIndex;
             } else if (newGameState === 'showdown') {
-                handleShowdown(gameData);
+                handleShowdown();
             }
             update(gameRef, updates);
         }
 
-        function handleShowdown(data) {
-            const winner = Object.values(data.players).filter(p => p.status !== 'folded')[0];
+        function handleShowdown() {
+            const updates = { gameState: 'showdown', winnerAnnounced: true };
+            const playersInHand = Object.values(gameData.players).filter(p => p.status !== 'folded');
+
+            // 役判定ロジックは未実装のため、仮の勝者を決定
+            const winner = playersInHand.length > 0 ? playersInHand[0] : null;
+
             if(winner) {
-                const newChips = (winner.chips || 0) + (data.pot || 0);
-                update(ref(db, `games/${currentGameId}/players/${winner.uid}`), { chips: newChips });
-                update(gameRef, { winnerAnnounced: true, message: `${winner.name}の勝利！` });
-                showModal(`${winner.name}がポット(${data.pot})を獲得しました！(役判定は未実装)`);
+                const pot = gameData.pot + (Object.values(gameData.players).reduce((acc, p) => acc + p.currentBet, 0));
+                const newChips = (winner.chips || 0) + pot;
+                updates[`players/${winner.uid}/chips`] = newChips;
+                updates.message = `${winner.name}の勝利！`;
+                showModal(`${winner.name}がポット(${pot})を獲得しました！(役判定は未実装)`);
             }
-            setTimeout(() => update(gameRef, { gameState: 'waiting' }), 5000);
+            
+            update(gameRef, updates);
+            setTimeout(() => {
+                const resetUpdates = { gameState: 'waiting', pot: 0, communityCards: [] };
+                Object.keys(gameData.players).forEach(uid => {
+                    resetUpdates[`players/${uid}/hand`] = [];
+                    resetUpdates[`players/${uid}/currentBet`] = 0;
+                });
+                update(gameRef, resetUpdates);
+            }, 5000);
         }
 
         modalCloseBtn.addEventListener('click', () => modal.classList.add('hidden'));
